@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				font-family: Monospace;
+				background-color: #000;
+				margin: 0px;
+				overflow: hidden;
+			}
+		</style>
+	</head>
+
+	<body>
+		<script src="js/three.js"></script>
+		<script src="js/WebGL.js"></script>
+		<script src="js/libs/stats.min.js"></script>
+		<script src="js/controls/OrbitControls.js"></script>
+		<script>
+
+			if ( WEBGL.isWebGLAvailable() === false ) {
+
+				document.body.appendChild( WEBGL.getWebGLErrorMessage() );
+
+			}
+
+			var container, stats, lights, ambient;
+			var camera, scene, sceneVolume, renderer, gl;
+			var sphere,cyl;
+
+			init();
+			animate();
+
+			function init() {
+
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				clock = new THREE.Clock();
+
+				camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 0.25, 100 );
+				camera.position.set( - 30, 10, 30 );
+				camera.lookAt( new THREE.Vector3( 0, 0, 0 ) );
+
+				new THREE.OrbitControls( camera );
+
+				// Holds our actual scene
+				scene = new THREE.Scene();
+
+				// Holds our shadow volume meshes
+				sceneVolume = new THREE.Scene();
+
+				// Lights
+
+				// Ambient that'll draw the shadowed region
+				ambient = new THREE.AmbientLight(0x404040);
+				scene.add(ambient);
+
+				// Lights that are stenciled to the non-shadowed region
+				var light0 = new THREE.DirectionalLight( 0xffffff );
+				light0.position.set( 0, 20, 10 );
+				scene.add( light0 );
+
+				var light1 = new THREE.DirectionalLight( 0xffffff );
+				light1.position.set( 0, -1, 0 );
+				scene.add( light1 );
+
+				lights = [light0, light1];
+
+				// Scene
+
+				// Box
+				var mesh = new THREE.Mesh(
+					new THREE.BoxBufferGeometry( 15, 15 , 5), 
+					new THREE.MeshPhongMaterial( { color: 0xff0000 } )
+				);
+				mesh.rotation.x = - Math.PI / 2;
+				mesh.position.set(0,-2,0);
+				scene.add( mesh );
+
+				// Sphere
+				var geometry = new THREE.SphereBufferGeometry( 3, 32, 32 );
+				var material = new THREE.MeshPhongMaterial( { color: 0x00ff00 } ) ;
+				sphere = new THREE.Mesh( geometry, material );
+				sphere.position.set(0,5,0);
+				scene.add( sphere );
+
+				// Cylinder Shadow
+				var geometry = new THREE.CylinderBufferGeometry( 3, 3, 20, 32 );
+				var material = new THREE.MeshBasicMaterial( { color: 0x00ff00 } ) ;
+				cyl = new THREE.Mesh( geometry, material );
+				sceneVolume.add( cyl );
+
+
+				// Renderer
+				renderer = new THREE.WebGLRenderer( { antialias: true, alpha:true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.gammaOutput = true;
+				renderer.gammaFactor = 2.2;
+				renderer.autoClear = false;
+				renderer.autoClearStencil = false;
+				renderer.autoClearDepth = false;
+				renderer.autoClearColor = false;
+				gl = renderer.context;
+				container.appendChild( renderer.domElement );
+
+				window.addEventListener( 'resize', onWindowResize, false );
+
+				// stats
+				stats = new Stats();
+				container.appendChild( stats.dom );
+
+			}
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				// Update fps
+				stats.update();
+
+				// Update objects in scene
+				var t = clock.getElapsedTime();
+				var x = Math.sin(t*3)*10;
+				var z = Math.cos(t)*10;
+
+				sphere.position.set(x,5,z);
+				cyl.position.set(x,-5,z);
+
+				// BEGIN RENDER
+
+				// Clears color, depth and stencil buffers
+				renderer.clear();
+
+				// Disable lights to draw ambient pass using .intensity = 0
+				// instead of .visible = false to not force a slow shader
+				// recomputation.
+				lights.forEach(function(light){
+					light.intensity = 0;
+				});
+
+				// Render the scene with ambient lights only
+				renderer.render(scene, camera);
+
+				// Enable stencils
+				gl.enable(gl.STENCIL_TEST);
+
+				// Config the stencil buffer to test each fragment
+				gl.stencilFunc(gl.ALWAYS, 1, 0xff);
+
+				// Disable writes to depth buffer and color buffer
+				// Only want to write to stencil
+				gl.depthMask(false);
+				gl.colorMask(false, false, false, false);
+
+				// Begin depth fail algorithm for stencil updates
+
+				// Cull front faces
+				gl.cullFace(gl.FRONT);
+
+				// Increment on depth fail (2nd param)
+				gl.stencilOp(gl.KEEP, gl.INCR, gl.KEEP);
+
+				// Render shadow volumes
+				renderer.render(sceneVolume, camera);
+
+				// Cull back faces
+				gl.cullFace(gl.BACK);
+
+				// Decrement on depth fail (2nd param)
+				gl.stencilOp(gl.KEEP, gl.DECR, gl.KEEP);
+
+				// Render shadow volumes again
+				renderer.render(sceneVolume, camera);
+
+				// Redraw against the stencil non-shadowed regions
+				// Stencil buffer now reads 0 for non-shadow
+				gl.stencilFunc(gl.EQUAL, 0, 0xff);
+
+				// Don't update stencil buffer anymore
+				gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
+
+				// Re-enable writes to the depth and color buffers
+				gl.depthMask(true);
+				gl.colorMask(true, true, true, true);
+
+				// Clear depth test - may not be required
+				// renderer.clear(false, true, false);
+
+				// Re-enable lights for render
+				lights.forEach(function(light){
+					light.intensity = 1;
+				});
+
+				// Render scene that's not in shadow with light calculations
+				renderer.render(scene, camera);
+
+				// Disable stencil test
+				gl.disable(gl.STENCIL_TEST);
+			}
+
+		</script>
+
+	</body>
+</html>
