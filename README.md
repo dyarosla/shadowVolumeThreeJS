@@ -3,7 +3,8 @@
 An implementation of shadow volumes in three.js (v104) using depth fail
 
 # Demo
-[Live Demo](https://dyarosla.github.io/shadowVolumeThreeJS/vid/vid.gif)
+[![Live Demo](https://dyarosla.github.io/shadowVolumeThreeJS/vid/vid.gif)]
+
 (https://dyarosla.github.io/shadowVolumeThreeJS/index.html)
 
 ## To Run
